@@ -1,0 +1,61 @@
+<?xml version="1.0"?>
+<robot name="gm_robot_1" xmlns:xacro="http://ros.org/wiki/xacro" xmlns:fishros="http://fishros.com">
+  <xacro:include filename="../xacro_template.xacro" />
+  <link name="base_footprint"/>
+
+  <link name="base_link">
+
+    <xacro:box_visual w="0.2" d="0.2" h="0.01" origin_x_axis="0" origin_y_axis="0" origin_z_axis="0.1" origin_r="0" origin_p="0" origin_y="0">
+    </xacro:box_visual>
+
+  </link>
+
+  <joint name="base_joint" type="fixed">
+    <parent link="base_footprint"/>
+    <child link="base_link"/>
+    <origin rpy="0 0 0" xyz="0 0 0.09"/>
+  </joint>
+
+  <link name="laser_link">
+
+    <xacro:cylinder_visual r="0.04" h="0.07" origin_x_axis="0" origin_y_axis="0" origin_z_axis="0.12" origin_r="0" origin_p="0" origin_y="0">
+    </xacro:cylinder_visual>
+
+  </link>
+
+  <joint name="laser_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="laser_link"/>
+    <origin rpy="0 0 0" xyz="0 0 0.11"/>
+  </joint>
+
+
+    <!-- IMU Link -->
+  <link name="imu_link">
+
+    <xacro:box_visual w="0.01" d="0.01" h="0.01" origin_x_axis="0" origin_y_axis="0" origin_z_axis="0.1" origin_r="0" origin_p="0" origin_y="0">
+    </xacro:box_visual>
+
+  </link>
+
+  <joint name="imu_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="imu_link"/>
+    <origin rpy="0 0 0" xyz="0 0 0.09"/>  <!-- 根据实际位置调整 -->
+  </joint>
+
+  <!-- Camera Link -->
+  <link name="camera_link">
+
+    <xacro:box_visual w="0.01" d="0.01" h="0.01" origin_x_axis="0.1" origin_y_axis="0" origin_z_axis="0.13" origin_r="0" origin_p="${pi/2}" origin_y="0">
+    </xacro:box_visual>
+
+  </link>
+
+  <joint name="camera_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="camera_link"/>
+    <origin rpy="0 0 0" xyz="0.1 0 0.12"/>  <!-- 根据实际位置调整 -->
+  </joint>
+
+</robot>

@@ -1,0 +1,48 @@
+find_package (找依赖)
+       ↓
+add_executable (生成目标)
+       ↓
+target_link_libraries / ament_target_dependencies (链接库)
+       ↓
+install (安装到系统对应位置，使可以直接调用)
+
+rosidl_generate_interfaces(${PROJECT_NAME}#对应的包名字
+    "msg/RobotStatus.msg"           # 自定义消息文件
+    DEPENDENCIES builtin_interfaces # 依赖的其他消息包
+)
+把信息安装到系统对应位置，使外部可以直接调用
+
+#把编译好的程序放到系统可以找到的地方，使外部可以直接调用
+install(DIRECTORY
+urdf
+DESTINATION share/${PROJECT_NAME})
+
+install(TARGETS
+turtle_circlr
+DESTINATION lib/${PROJECT_NAME})
+
+add_library(spin_motion_controller SHARED
+  src/spin_motion_controller.cpp
+)
+作用：把 cpp 文件编译成动态库（插件）。
+spin_motion_controller：库名字（自己定）。
+SHARED：表示编译成动态库 .so（ROS 2 插件必须用 SHARED）。
+pluginlib_export_plugin_description_file(
+  motion_control
+  spin_motion_plugins.xml
+)
+motion_control：基类所在的功能包（你要继承的插件接口所在包）。
+spin_motion_plugins.xml：插件描述文件（里面写了插件类名、路径）。
+
+install/
+└── 项目名/
+    ├── lib/
+    │   └── 项目名/
+    │       └── 可执行文件     ← 放程序
+    │
+    └── share/
+        └── 项目名/
+            ├── urdf/          ← 放资源文件
+            ├── launch/
+            ├── config/
+            └── package.xml

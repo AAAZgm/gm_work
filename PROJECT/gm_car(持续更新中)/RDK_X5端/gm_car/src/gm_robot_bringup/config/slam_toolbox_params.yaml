@@ -1,0 +1,156 @@
+slam_toolbox:
+  ros__parameters:
+
+    # ========================================
+    # 优化器插件配置
+    # ========================================
+    # Plugin params
+    solver_plugin: solver_plugins::CeresSolver    # 优化器插件：Ceres 求解器
+    ceres_linear_solver: SPARSE_NORMAL_CHOLESKY  # 线性求解器类型
+                                                 # SPARSE_NORMAL_CHOLESKY: 稀疏矩阵，适合大地图
+                                                 # DENSE_QR: 稠密矩阵，小地图更快
+    ceres_preconditioner: SCHUR_JACOBI           # 预条件器：加速收敛
+    ceres_trust_strategy: LEVENBERG_MARQUARDT    # 信任域策略：优化算法
+    ceres_dogleg_type: TRADITIONAL_DOGLEG        # Dogleg 类型
+    ceres_loss_function: None                    # 损失函数：None = 不使用鲁棒核
+
+    # ========================================
+    # ROS 基础参数
+    # ========================================
+    odom_frame: odom              # 里程计坐标系名称
+    map_frame: map                # 地图坐标系名称
+    base_frame: base_footprint
+    odom_topic: /odom  # 添加这行，使用滤波后的 odom
+    scan_topic: /scan             # 激光雷达话题名称
+    use_map_saver: true           # 是否启用地图保存服务
+    mode: mapping                 # 运行模式
+                                 # mapping = 建图模式
+                                 # localization = 定位模式
+
+    # ========================================
+    # 地图继续配置（可选）
+    # ========================================
+    # if you'd like to immediately start continuing a map at a given pose
+    # or at the dock, but they are mutually exclusive, if pose is given
+    # will use pose
+    #map_file_name: test_steve    # 继续建图的地图文件名
+    # map_start_pose: [0.0, 0.0, 0.0]  # 起始位姿 [x, y, yaw]
+    #map_start_at_dock: true      # 从停靠点开始
+
+    # ========================================
+    # 调试和性能参数
+    # ========================================
+    debug_logging: false          # 调试日志：false = 关闭详细日志
+    throttle_scans: 1             # 扫描节流：每 N 帧处理 1 帧
+                                  # 1 = 处理全部帧
+                                  # 2 = 每 2 帧处理 1 帧（减少 CPU）
+    transform_publish_period: 0.02 # TF 发布周期（秒）
+                                  # 0.02 = 50Hz
+                                  # 0 = 不发布 odom TF
+    map_update_interval: 0.5      # 地图更新间隔（秒）
+                                  # 5.0 = 每 5 秒更新一次地图显示
+    resolution: 0.05              # 地图分辨率（米/像素）
+                                  # 0.05 = 5cm/像素
+                                  # 越小越精细，文件越大
+    
+    # ========================================
+    # 激光范围参数
+    # ========================================
+    min_laser_range: 0.1          # 激光最小有效范围（米）
+                                  # 0.0 = 不过滤
+                                  # 设置为激光实际最小范围（如 0.2）
+    max_laser_range: 20.0         # 激光最大有效范围（米）
+                                  # 超过此距离的数据被忽略
+                                  # 根据激光实际范围设置
+    
+    # ========================================
+    # 时间和 TF 参数
+    # ========================================
+    minimum_time_interval: 0.1    # 最小处理时间间隔（秒）
+                                  # 0.5 = 每 0.5 秒最多处理一次
+                                  # 减小 = 建图更快，CPU 更高
+    transform_timeout: 0.2        # TF 查询超时时间（秒）
+    tf_buffer_duration: 30.0       # TF 缓存时长（秒）
+                                  # 30 = 缓存 30 秒的 TF 数据
+    stack_size_to_use: 40000000   # 线程栈大小（字节）
+                                  # 大地图需要更大的栈
+    enable_interactive_mode: true # 启用交互模式
+                                  # true = 可在 RViz 中调整位姿
+
+    # ========================================
+    # 通用建图参数
+    # ========================================
+    use_scan_matching: true       # 使用扫描匹配
+                                  # true = 必须开启
+    use_scan_barycenter: true     # 使用扫描重心
+                                  # true = 提高匹配精度
+    
+    # ⭐ 关键参数：控制建图频率
+    minimum_travel_distance: 0.05  # 最小移动距离（米）
+                                  # 0.5 = 移动 0.5 米才更新地图
+                                  # 减小 = 建图更频繁（如 0.1）
+    minimum_travel_heading: 0.05   # 最小旋转角度（弧度）
+                                  # 0.5 rad ≈ 28.6°
+                                  # 减小 = 建图更频繁（如 0.1）
+    
+    scan_buffer_size: 10          # 扫描缓存大小（帧数）
+                                  # 增大 = 提高匹配精度，占用更多内存
+    scan_buffer_maximum_scan_distance: 10.0  # 缓存的最大扫描距离
+
+    # ========================================
+    # 扫描匹配参数
+    # ========================================
+    link_match_minimum_response_fine: 0.1   # 精细匹配最小响应值
+    link_scan_maximum_distance: 1.5         # 链接扫描最大距离
+
+    # ========================================
+    # 回环检测参数
+    # ========================================
+    loop_search_maximum_distance: 3.0   # 回环搜索最大距离
+    do_loop_closing: true               # 是否进行回环检测
+                                         # true = 开启（推荐）
+                                         # false = 关闭（建图更快但不修正漂移）
+    loop_match_minimum_chain_size: 10   # 回环最小链长
+                                         # 匹配点数 >= 10 才认为回环
+    loop_match_maximum_variance_coarse: 3.0  # 粗略匹配最大方差
+    loop_match_minimum_response_coarse: 0.5 # 粗略匹配最小响应
+    loop_match_minimum_response_fine: 0.6   # 精细匹配最小响应
+
+    # ========================================
+    # 相关性搜索参数 - 常规
+    # ========================================
+    correlation_search_space_dimension: 0.5    # 搜索空间维度（米）
+    correlation_search_space_resolution: 0.01  # 搜索分辨率（米）
+    correlation_search_space_smear_deviation: 0.1  # 搜索平滑偏差
+
+    # ========================================
+    # 相关性搜索参数 - 回环
+    # ========================================
+    loop_search_space_dimension: 8.0       # 回环搜索空间（米）
+    loop_search_space_resolution: 0.05    # 回环搜索分辨率
+    loop_search_space_smear_deviation: 0.03  # 回环搜索平滑偏差
+
+    # ========================================
+    # 扫描匹配器参数
+    # ========================================
+    distance_variance_penalty: 0.5     # 距离方差惩罚
+    angle_variance_penalty: 1.0        # 角度方差惩罚
+
+    fine_search_angle_offset: 0.00349      # 精细搜索角度偏移（弧度）
+                                            # ≈ 0.2°
+    coarse_search_angle_offset: 0.349      # 粗略搜索角度偏移（弧度）
+                                            # ≈ 20°
+    coarse_angle_resolution: 0.0349        # 粗略角度分辨率（弧度）
+                                            # ≈ 2°
+    minimum_angle_penalty: 0.9         # 最小角度惩罚
+    minimum_distance_penalty: 0.5      # 最小距离惩罚
+    use_response_expansion: true       # 使用响应扩展
+
+    # ========================================
+    # 地图生成参数
+    # ========================================
+    min_pass_through: 2            # 最小穿透次数
+                                   # 2 = 每个格子至少被扫描 2 次才更新
+    occupancy_threshold: 0.1       # 占用阈值
+                                   # > 0.1 = 障碍物
+                                   # < 0.1 = 自由空间

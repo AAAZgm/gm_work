@@ -1,0 +1,25 @@
+/**:
+  ros__parameters:
+    # ASR节点
+    asr_node:
+      asr_topic: "/asr_output"
+      user_cmd_topic: "/car/user_cmd"
+
+    # LLM节点（核心：模型路径）
+    llm_node:
+      model_path: "/home/sunrise/gm_car/colcon_ws/src/llm_control/config/Qwen2.5-0.5B-Instruct-Q4_0.gguf"
+      user_cmd_topic: "/car/user_cmd"
+      llm_cmd_topic: "/car/llm_cmd"
+      tts_topic: "/car/tts_play"
+      n_ctx: 2048
+      n_threads: 4
+
+    # 控制节点
+    control_node:
+      llm_cmd_topic: "/car/llm_cmd"
+      cmd_vel_topic: "/cmd_vel"
+      rad_per_degree: 0.0174533
+
+    # TTS节点
+    tts_node:
+      tts_topic: "/car/tts_play"

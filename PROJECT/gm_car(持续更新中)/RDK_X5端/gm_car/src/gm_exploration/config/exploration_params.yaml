@@ -1,0 +1,16 @@
+exploration_node:
+  ros__parameters:
+    # 边界探索参数
+    exploration:
+      frontier_threshold: 0.5      # 边界最小距离
+      min_frontier_size: 10        # 最小边界点数
+      goal_timeout: 30.0           # 目标超时时间
+      max_attempts: 5              # 最大失败尝试次数
+      map_save_interval: 60.0      # 自动保存地图间隔
+      completion_threshold: 0.95   # 完成阈值（已探索区域比例）
+    
+    # 代价地图过滤
+    costmap_filter:
+      use_costmap_filter: true
+      lethal_cost: 254
+      unknown_cost: 255

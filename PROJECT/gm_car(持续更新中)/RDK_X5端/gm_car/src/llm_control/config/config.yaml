@@ -1,0 +1,11 @@
+# ========== 仅需确认这3处 ==========
+camera_topic: "/camera/image_for_vla"        # 你的相机话题（确认）
+cmd_vel_topic: "/cmd_vel"                    # 你的小车控制话题（确认）
+model_dir: "../" # 【改这里！】模型所在文件夹
+
+# 无需修改
+user_cmd_topic: "/car/user_cmd"
+result_topic: "/car/result"
+yolo_conf: 0.5
+vit_model_name: "vit_model_int16_v2.bin"
+llm_model_name: "Qwen2.5-0.5B-Instruct-Q4_0.gguf"
