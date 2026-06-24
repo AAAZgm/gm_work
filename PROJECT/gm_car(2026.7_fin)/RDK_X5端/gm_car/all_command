@@ -1,0 +1,28 @@
+colcon build --packages-select
+
+sour	ce install/setup.bash
+
+ros2 launch gm_navigation navigation2.py map:=/home/sunrise/gm_car/colcon_ws/src/gm_navigation/maps/my_cartographer_map.yaml
+ros2 launch gm_navigation navigation2_nomap.py
+ros2 launch gm_exploration exploration_launch.py
+ros2 launch gm_robot_bringup bringup_slamtool.py use_cam:=False use_rviz:=True
+ros2 launch gm_robot_bringup bringup_slamtool_raw.py use_cam:=False use_rviz:=True
+ros2 launch gm_robot_bringup bringup_cartographer.py use_cam:=False use_rviz:=True
+ros2 launch gm_robot_bringup bringup_cartographer_raw.py use_cam:=False use_rviz:=True
+ros2 launch follow_person follow_with_gesture_launch.py
+ros2 launch follow_person follow_without_gesture_launch.py
+ros2 launch gm_4dof gm_4dof_launch.py 
+
+
+ros2 launch gm_robot_bringup bringup_car.py use_cam:=True
+
+ros2 launch patrol_robot autopatrol.launch.py config:=/home/sunrise/gm_car/colcon_ws/src/patrol_robot/config/patrol_config.yaml
+
+sh /home/sunrise/gm_car/colcon_ws/gm_save_cartographer.sh
+
+ros2 launch wp_map_tools add_waypoint_home.launch.py map:=/home/sunrise/gm_car/colcon_ws/src/gm_navigation/maps/my_cartographer_map.yaml
+ros2 run wp_map_tools wp_saver 
+ros2 run usb_cam usb_cam_node 
+ros2 run gm_4dof arm_keyboard
+ros2 launch gm_robot_bringup bringup_car.py use_cam:=True
+

@@ -1,0 +1,6 @@
+patrol_node:
+  ros__parameters:
+    initial_point: [0.0, 0.0, 0.0]
+    target_points: [0.959257, 0.0552066, 0.01699, 6.99131, 2.69624, 1.89531, 0.0625371, 3.27753, -3.03698, -6.13435, 1.57289, -1.27074]
+    image_save_path: '/home/sunrise/gm_car/colcon_ws/src/patrol_robot/photo'
+    nav_timeout: 60.0

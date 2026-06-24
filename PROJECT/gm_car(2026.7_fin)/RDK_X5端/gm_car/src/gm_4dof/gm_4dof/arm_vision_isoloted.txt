@@ -1,0 +1,322 @@
+#!/usr/bin/env python3
+"""
+机械臂视觉引导模块 - 眼在手外（eye-to-hand）
+
+思路：摄像头垂直俯视桌面，机械臂在同一平面内移动
+流程：摄像头检测物体 → 像素偏移×比例 = mm偏移 → 基准角度+偏移 → 移动
+"""
+
+# ======================== 导入库 ========================
+import time                      # time.sleep() 用于等待和延时
+import cv2                       # OpenCV，用于图像处理（颜色过滤、轮廓检测等）
+import numpy as np               # NumPy，用于数组运算（HSV范围、掩膜操作）
+from cv_bridge import CvBridge   # ROS2 的 cv_bridge，将 ROS 图像消息转为 OpenCV 格式
+from sensor_msgs.msg import Image # ROS2 标准图像消息类型，用于订阅摄像头话题
+
+
+# ============================================================
+# TODO: 以下参数需要根据实际情况标定
+# ============================================================
+
+# --- 1. 摄像头参数 ---
+IMAGE_WIDTH = 640          # 摄像头输出的图像宽度，单位：像素
+IMAGE_HEIGHT = 480         # 摄像头输出的图像高度，单位：像素
+
+# --- 2. 标定参数【关键！实测改这里】 ---
+# PIX_TO_MM：1像素等于多少毫米
+# 标定方法：放一个已知宽度的物体（如80mm卡片），数它在画面中占多少像素（如100px），
+#          则 PIX_TO_MM = 80 / 100 = 0.8
+PIX_TO_MM = 0.0           # TODO: 实测填写，比如 0.8 表示1像素=0.8mm
+
+# CAM_CENTER_X/Y：画面中心像素坐标
+# 对于 640×480 的图像，中心就是 (320, 240)
+# 物体偏离中心多少像素，就对应偏移了多少物理距离
+CAM_CENTER_X = 320        # 画面水平中心像素
+CAM_CENTER_Y = 240        # 画面垂直中心像素
+
+# --- 3. 偏心补偿(mm) ---
+# 如果夹爪/吸嘴的尖端和摄像头光心在物理上没有完全对齐（有偏移），
+# 就在这里补偿。比如夹爪比摄像头偏右5mm，就填 OFFSET_X = -5.0
+# 如果完全对齐，就填 0
+OFFSET_X = 0.0            # X方向偏心补偿，单位：mm（正值=向右补偿）
+OFFSET_Y = 0.0            # Y方向偏心补偿，单位：mm（正值=向下补偿）
+
+# --- 4. 颜色HSV范围字典 ---
+# 每个颜色对应一个 (H低,S低,V低) ~ (H高,S高,V高) 的范围
+# H(色相) 0-180, S(饱和度) 0-255, V(明度) 0-255
+COLOR_RANGES = {
+    # 红色：H=0~10（注意：红色在HSV色环上跨越0/180两端，代码里会额外处理 H=170~180）
+    'red':    ([0, 100, 100],   [10, 255, 255]),
+    # 绿色：H=35~85，排除黄色和青色的干扰
+    'green':  ([35, 100, 100],  [85, 255, 255]),
+    # 蓝色：H=100~130
+    'blue':   ([100, 100, 100], [130, 255, 255]),
+    # 黄色：H=20~35
+    'yellow': ([20, 100, 100],  [35, 255, 255]),
+    # 橙色：H=10~20（介于红色和黄色之间）
+    'orange': ([10, 100, 100],  [20, 255, 255]),
+    # 白色：S低(0~50) + V高(200~255)，白色饱和度低但亮度高
+    'white':  ([0, 0, 200],     [180, 50, 255]),
+}
+
+# MIN_CONTOUR_AREA：最小轮廓面积阈值，单位：像素²
+# 面积小于这个值的轮廓会被当作噪点过滤掉，避免误检
+MIN_CONTOUR_AREA = 500
+
+
+# ============================================================
+# 颜色 + 形状检测
+# ============================================================
+
+def detect_object(frame, color, shape):
+    """
+    在单帧图像中检测指定颜色和形状的物体
+
+    参数:
+        frame: OpenCV 图像（BGR格式），来自摄像头的一帧画面
+        color: 目标颜色名称，如 'red', 'green', 'blue' 等，对应 COLOR_RANGES 字典的键
+        shape: 目标形状名称，如 'circle', 'rectangle', 'triangle'，None 表示不限制形状
+
+    返回:
+        成功: (cx, cy, area) 元组
+              cx, cy = 物体中心的像素坐标 (整数)
+              area = 物体轮廓面积 (像素²，浮点数)
+        失败: None（颜色不存在、或没找到匹配的物体）
+    """
+
+    # 第1步：BGR 转 HSV 色彩空间
+    # HSV 比 BGR 更适合做颜色过滤，因为 H 通道直接表示色相，不受亮度影响
+    hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+
+    # 第2步：从字典中查找目标颜色的 HSV 范围
+    color_range = COLOR_RANGES.get(color.lower())  # .lower() 忽略大小写，'Red' 和 'red' 都行
+    if color_range is None:
+        return None  # 颜色名称不在字典中，直接返回找不到
+
+    # 将列表转为 NumPy 数组，uint8 是 OpenCV 掩膜操作要求的类型
+    lower = np.array(color_range[0], dtype=np.uint8)  # HSV 下限 [H低, S低, V低]
+    upper = np.array(color_range[1], dtype=np.uint8)  # HSV 上限 [H高, S高, V高]
+
+    # 第3步：创建颜色掩膜（mask）
+    # 掩膜是一个黑白图：白色(255)=符合颜色范围，黑色(0)=不符合
+    if color.lower() == 'red':
+        # 红色特殊处理：在HSV色环上，红色的H值跨越了两端（0~10 和 170~180）
+        # 所以需要做两段 inRange，然后用 OR 合并
+        mask1 = cv2.inRange(hsv, lower, upper)  # 第1段: H=0~10
+        lower2 = np.array([170, 100, 100], dtype=np.uint8)  # 第2段下限
+        upper2 = np.array([180, 255, 255], dtype=np.uint8)  # 第2段上限
+        mask2 = cv2.inRange(hsv, lower2, upper2)  # H=170~180
+        mask = mask1 | mask2  # 按位或：两段白色区域合并
+    else:
+        # 其他颜色：只需一段 inRange
+        mask = cv2.inRange(hsv, lower, upper)
+
+    # 第4步：形态学去噪
+    # 开运算 = 先腐蚀后膨胀 → 去掉白色小噪点
+    # 闭运算 = 先膨胀后腐蚀 → 填充白色区域里的小黑孔
+    kernel = np.ones((5, 5), np.uint8)  # 5×5 的方形结构元素
+    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)   # 去噪点
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)  # 填孔洞
+
+    # 第5步：找轮廓
+    # RETR_EXTERNAL = 只检测最外层轮廓（不检测嵌套的）
+    # CHAIN_APPROX_SIMPLE = 压缩轮廓点，只保留关键点（节省内存）
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+    # 第6步：遍历所有轮廓，找面积最大且形状匹配的
+    best = None        # 保存最佳候选：格式为 (cx, cy, area) 或 None
+    best_area = 0      # 当前最大面积
+    for contour in contours:
+        area = cv2.contourArea(contour)  # 计算轮廓面积（像素²）
+        if area < MIN_CONTOUR_AREA:      # 面积太小，跳过（视为噪点）
+            continue
+        if shape and not _match_shape(contour, shape):  # 如果指定了形状且不匹配，跳过
+            continue
+        if area > best_area:             # 面积比之前的候选更大，更新最佳候选
+            best_area = area
+            # 用图像矩（moments）计算轮廓的重心坐标
+            M = cv2.moments(contour)     # 计算轮廓的所有矩
+            if M['m00'] > 0:             # m00 = 轮廓面积，防止除以0
+                # cx = m10/m00, cy = m01/m00（重心坐标公式）
+                cx = int(M['m10'] / M['m00'])  # 重心X坐标（像素）
+                cy = int(M['m01'] / M['m00'])  # 重心Y坐标（像素）
+                best = (cx, cy, area)          # 保存为最佳候选
+
+    return best  # 返回最佳候选，如果没有就是 None
+
+
+def _match_shape(contour, shape):
+    """
+    判断单个轮廓是否匹配指定的形状
+
+    参数:
+        contour: OpenCV 轮廓，是一个 Nx1x2 的点集数组
+        shape:   形状名称字符串，如 'circle', 'rectangle', 'triangle'
+
+    返回:
+        True = 匹配，False = 不匹配
+
+    原理:
+        圆形 → 用圆度（4πA/P²）判断，越接近1越圆
+        矩形 → 用多边形近似，顶点数为4
+        三角形 → 用多边形近似，顶点数为3
+    """
+    shape = shape.lower()  # 统一转小写，方便中英文都能匹配
+
+    # ---------- 圆形判断 ----------
+    if shape in ('circle', '圆形', '圆'):
+        # 圆度公式：circularity = 4π × 面积 / 周长²
+        # 完美圆的圆度 = 1.0，越不圆越小
+        perimeter = cv2.arcLength(contour, True)  # 计算轮廓周长（True=闭合轮廓）
+        if perimeter == 0:  # 周长为0，避免除以0
+            return False
+        circularity = 4 * 3.14159 * cv2.contourArea(contour) / (perimeter ** 2)
+        return circularity > 0.75  # 阈值0.75：大于这个值就认为是圆形
+
+    # ---------- 矩形判断 ----------
+    elif shape in ('rectangle', 'rect', '方形', '矩形', '长方形', '正方形'):
+        # 用 Douglas-Peucker 算法做多边形近似，把弯曲的轮廓简化为直线段
+        # epsilon = 周长的4% → 控制近似精度，越小越精细
+        epsilon = 0.04 * cv2.arcLength(contour, True)
+        approx = cv2.approxPolyDP(contour, epsilon, True)  # True=闭合多边形
+        # 矩形有4个顶点（正方形也算4个）
+        return len(approx) == 4
+
+    # ---------- 三角形判断 ----------
+    elif shape in ('triangle', '三角', '三角形'):
+        # 同样的多边形近似方法
+        epsilon = 0.04 * cv2.arcLength(contour, True)
+        approx = cv2.approxPolyDP(contour, epsilon, True)
+        # 三角形有3个顶点
+        return len(approx) == 3
+
+    # 未知形状 → 默认匹配（不限制形状）
+    return True
+
+
+# ============================================================
+# 视觉引导控制器（眼在手外）
+# ============================================================
+
+class ArmVisionGuide:
+    """
+    眼在手外（eye-to-hand）视觉引导控制器
+
+    工作模式：
+        摄像头固定在上方，垂直俯视桌面
+        机械臂在同一桌面平面内移动
+        不需要关心Z轴（高度），因为末端执行器和物体本来就在同一高度
+
+    使用方式：
+        在 dof_control.py 中这样初始化：
+            self.vision_guide = ArmVisionGuide(self)
+        然后调用：
+            success, dx_mm, dy_mm = self.vision_guide.find('red', 'circle')
+    """
+
+    def __init__(self, node):
+        """
+        初始化视觉引导模块
+
+        参数:
+            node: ROS2 节点实例（RobotArmController），用于创建订阅器和打印日志
+        """
+        self.node = node                          # 保存 ROS2 节点引用，后续用于日志输出
+        self.bridge = CvBridge()                  # 创建 CvBridge 实例，用于 ROS Image ↔ OpenCV 转换
+        self.latest_frame = None                  # 保存最新一帧图像，初始为空（摄像头还没启动时）
+
+        # 创建图像话题订阅器
+        # 订阅 /camera/image_raw 话题（usb_cam 节点发布）
+        # 每收到一帧图像就调用 _image_callback 保存起来
+        self.img_sub = node.create_subscription(
+            Image, '/camera/image_raw',   # 话题名和消息类型
+            self._image_callback,          # 回调函数
+            10)                            # 队列深度：缓冲10帧，防止处理不过来时丢帧
+
+    def _image_callback(self, msg):
+        """
+        图像话题回调函数（每收到一帧图像就自动调用一次）
+
+        参数:
+            msg: sensor_msgs/Image 格式的 ROS 图像消息
+
+        功能：
+            将 ROS 图像消息转换为 OpenCV 的 BGR 格式 numpy 数组，
+            保存到 self.latest_frame，供 find() 方法使用
+        """
+        try:
+            # imgmsg_to_cv2: ROS Image → OpenCV Mat（numpy 数组）
+            # 'bgr8' 表示 BGR 3通道，每通道8位（0-255）
+            self.latest_frame = self.bridge.imgmsg_to_cv2(msg, 'bgr8')
+        except Exception as e:
+            # 转换失败（比如图像格式不兼容），打印警告但不崩溃
+            self.node.get_logger().warn(f'图像转换失败: {e}')
+
+    def find(self, color, shape, max_retries=5):
+        """
+        检测物体并计算相对画面中心的 mm 偏移量
+
+        参数:
+            color:       目标颜色，如 'red', 'green', 'blue' 等
+            shape:       目标形状，如 'circle', 'rectangle', 'triangle'
+            max_retries: 最大重试次数（默认5次），每次间隔0.3~0.5秒
+
+        返回:
+            成功: (True, dx_mm, dy_mm)
+                dx_mm: 物体相对画面中心的水平偏移(mm)，正值=物体在画面右边
+                dy_mm: 物体相对画面中心的垂直偏移(mm)，正值=物体在画面下方
+            失败: (False, 0.0, 0.0)
+        """
+        # 打印检测开始日志，方便调试
+        self.node.get_logger().info(f'视觉检测开始: 颜色={color}, 形状={shape}')
+
+        # 最多尝试 max_retries 次
+        for attempt in range(max_retries):
+            # 检查是否已经收到摄像头图像
+            if self.latest_frame is None:
+                # 还没收到图像，等待并重试
+                self.node.get_logger().info(f'等待摄像头图像... ({attempt+1}/{max_retries})')
+                time.sleep(0.5)  # 等0.5秒再检查
+                continue
+
+            # 复制最新帧（用 copy() 防止回调函数中途覆盖数据）
+            frame = self.latest_frame.copy()
+
+            # 调用 detect_object 在当前帧中检测目标
+            result = detect_object(frame, color, shape)
+
+            if result is None:
+                # 这一帧没检测到，打印日志并重试
+                self.node.get_logger().warn(f'第{attempt+1}次: 未检测到目标物体')
+                time.sleep(0.3)  # 等0.3秒让摄像头画面刷新
+                continue
+
+            # ===== 检测成功，计算偏移 =====
+            cx, cy, area = result  # cx=物体中心X像素, cy=Y像素, area=面积
+
+            # 打印检测结果
+            self.node.get_logger().info(f'检测到物体: 像素=({cx},{cy}), 面积={area:.0f}')
+
+            # 计算像素偏移：物体中心 - 画面中心
+            # delta_px > 0: 物体在画面中心右边
+            # delta_py > 0: 物体在画面中心下方
+            delta_px = cx - CAM_CENTER_X   # 水平像素偏移
+            delta_py = cy - CAM_CENTER_Y   # 垂直像素偏移
+
+            # 像素偏移 × 比例系数 = mm偏移，再加上偏心补偿
+            # dx_mm > 0: 物体在画面右边 mm 毫米处
+            # dy_mm > 0: 物体在画面下方 mm 毫米处
+            dx_mm = delta_px * PIX_TO_MM + OFFSET_X
+            dy_mm = delta_py * PIX_TO_MM + OFFSET_Y
+
+            # 打印偏移详情，方便调参
+            self.node.get_logger().info(
+                f'像素偏移=({delta_px:+d},{delta_py:+d}), '   # +d 表示显示正负号
+                f'mm偏移=({dx_mm:+.1f},{dy_mm:+.1f})')         # +.1f 保留1位小数+正负号
+
+            # 返回成功结果
+            return True, dx_mm, dy_mm
+
+        # 所有重试都失败了
+        self.node.get_logger().warn(f'视觉检测失败，已重试{max_retries}次')
+        return False, 0.0, 0.0
