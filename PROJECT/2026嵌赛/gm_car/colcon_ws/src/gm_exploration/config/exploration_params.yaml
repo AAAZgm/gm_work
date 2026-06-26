@@ -1,0 +1,10 @@
+exploration_node:
+  ros__parameters:
+    # 边界探索参数
+    exploration:
+      frontier_threshold: 1.0       
+      min_frontier_size: 15         # 最小边界点数（从10提高到15，过滤更多碎片）
+      goal_timeout: 120.0           # 目标超时时间（从45s提高到120s=2分钟）
+      max_attempts: 5               # 最大失败尝试次数
+      map_save_interval: 60.0       # 自动保存地图间隔
+      completion_threshold: 0.80    # 完成阈值（从0.95降到0.80，80%即停止）

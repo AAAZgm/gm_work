@@ -1,0 +1,1136 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>地瓜小车 - 控制面板</title>
+
+<!-- roslibjs：ROS2 WebSocket 通信库 -->
+<script type="text/javascript" src="roslib.min.js"></script>
+
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, 'Microsoft YaHei', sans-serif;
+    background: #0f1923; color: #e0e6ed;
+    min-height: 100vh;
+  }
+
+  /* ===== 顶栏 ===== */
+  .header {
+    background: linear-gradient(135deg, #1a2a3a, #2a3a4a);
+    padding: 12px 20px;
+    display: flex; align-items: center; justify-content: space-between;
+    border-bottom: 2px solid #3a5068;
+  }
+  .header h1 { font-size: 20px; color: #5dfc5d; }
+  .conn-status {
+    padding: 4px 12px; border-radius: 12px; font-size: 13px;
+  }
+  .conn-status.ok   { background: #1a472a; color: #5dfc5d; }
+  .conn-status.fail { background: #4a1a1a; color: #fc5d5d; }
+
+  /* ===== 主布局：左2右3，等高对齐 ===== */
+  .main {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    grid-template-rows: 1fr 1fr 1fr;
+    grid-template-areas:
+      "map    camera"
+      "sensor arm"
+      "sensor voice";
+    gap: 12px;
+    padding: 12px;
+    max-width: 1200px;
+    margin: 0 auto;
+    height: calc(100vh - 70px);
+  }
+  @media (max-width: 768px) {
+    .main {
+      grid-template-columns: 1fr;
+      grid-template-areas:
+        "map"
+        "camera"
+        "sensor"
+        "arm"
+        "voice";
+      height: auto;
+    }
+  }
+
+  /* 模块区域绑定 */
+  .card-map    { grid-area: map; }
+  .card-camera { grid-area: camera; height: 360px; }
+  .card-sensor { grid-area: sensor; }
+  .card-arm    { grid-area: arm; height: 420px; }
+  .card-voice  { grid-area: voice; }
+
+  .card {
+    background: #1a2a3a; border-radius: 10px;
+    border: 1px solid #2a3a4a;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+  .card-title {
+    background: #223344; padding: 8px 14px;
+    font-size: 14px; font-weight: 600; color: #7ab8ff;
+    border-bottom: 1px solid #2a3a4a;
+  }
+  .card-body {
+    padding: 12px;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* ===== 地图区 ===== */
+  #map-canvas {
+    width: 100%; height: 400px;
+    background: #0a1520; border-radius: 4px;
+    cursor: crosshair;
+  }
+  .goal-info {
+    margin-top: 4px; font-size: 11px; color: #ff9f43;
+  }
+
+  /* ===== 摄像头 ===== */
+  .card-title-row {
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .toggle-switch {
+    position: relative; width: 40px; height: 22px;
+    background: #3a5068; border-radius: 11px;
+    cursor: pointer; transition: background 0.3s;
+  }
+  .toggle-switch.on { background: #5dfc5d; }
+  .toggle-switch::after {
+    content: ''; position: absolute;
+    top: 2px; left: 2px;
+    width: 18px; height: 18px;
+    background: #e0e6ed; border-radius: 50%;
+    transition: transform 0.3s;
+  }
+  .toggle-switch.on::after { transform: translateX(18px); }
+  .camera-off-hint {
+    display: none; width: 100%; height: 300px;
+    background: #000; border-radius: 4px;
+    color: #3a5068; font-size: 14px;
+    align-items: center; justify-content: center;
+  }
+  #camera-feed {
+    width: 100%; height: 300px;
+    border-radius: 4px;
+    background: #000;
+    border: none;
+  }
+
+  /* ===== 传感器仪表 ===== */
+  .sensors {
+    display: grid; grid-template-columns: 1fr 1fr;
+    gap: 10px;
+  }
+  .sensor-item {
+    background: #0f1f2f; border-radius: 8px;
+    padding: 12px; text-align: center;
+  }
+  .sensor-value {
+    font-size: 28px; font-weight: 700;
+    margin: 4px 0;
+  }
+  .sensor-label { font-size: 12px; color: #7a8a9a; }
+  .voltage  .sensor-value { color: #5dfc5d; }
+  .temp     .sensor-value { color: #ff9f43; }
+  .humidity .sensor-value { color: #54a0ff; }
+  .speed    .sensor-value { color: #ff6b6b; }
+
+  /* ===== 语音控制 ===== */
+  .voice-panel {
+    display: flex; gap: 8px;
+  }
+  .voice-input {
+    flex: 1; padding: 10px 14px;
+    background: #0f1f2f; color: #e0e6ed;
+    border: 1px solid #3a5068; border-radius: 8px;
+    font-size: 15px; outline: none;
+  }
+  .voice-input:focus { border-color: #5dfc5d; }
+  .btn {
+    padding: 10px 18px; border: none; border-radius: 8px;
+    font-size: 14px; cursor: pointer; font-weight: 600;
+    transition: all 0.2s;
+  }
+  .btn-send  { background: #5dfc5d; color: #0f1923; }
+  .btn-send:hover { background: #4ae44a; }
+  .btn-mic   { background: #ff6b6b; color: #fff; }
+  .btn-mic:hover { background: #ee5a5a; }
+  .btn-mic.recording { animation: pulse 1s infinite; }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+  }
+
+  /* ===== 快捷按钮 ===== */
+  .quick-cmds {
+    display: flex; flex-wrap: wrap; gap: 6px;
+    margin-top: 10px;
+  }
+  .cmd-btn {
+    padding: 6px 12px; font-size: 12px;
+    background: #223344; color: #7ab8ff;
+    border: 1px solid #3a5068; border-radius: 6px;
+    cursor: pointer;
+  }
+  .cmd-btn:hover { background: #2a4055; border-color: #7ab8ff; }
+
+  /* ===== 方向盘控制 ===== */
+  .dpad-container {
+    display: flex;
+    flex-direction: column;
+    align-items: center; /* 新增：整体水平居中 */
+    margin-top: 10px;
+    gap: 4px;
+    width: 100%; /* 占满容器宽度，让居中生效 */
+  }
+  .dpad-row {
+    display: flex;
+    gap: 4px;
+    align-items: center;
+  }
+  .dpad-btn {
+    width: 52px; height: 52px; border-radius: 10px;
+    background: #223344; color: #e0e6ed;
+    border: 2px solid #3a5068;
+    font-size: 20px; cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    user-select: none;
+    transition: background 0.1s;
+  }
+  .dpad-btn:active, .dpad-btn.active { background: #3a5068; }
+  .dpad-btn.stop {
+    background: #4a1a1a; border-color: #ff6b6b; color: #ff6b6b;
+    font-weight: 700; width: 48px; height: 48px;
+    border-radius: 50%;
+    font-size: 13px;
+  }
+  .dpad-placeholder {
+    width: 52px; height: 52px;
+  }
+
+  /* ===== 速度滑块 ===== */
+  .speed-slider-area {
+    display: flex; gap: 16px; margin-top: 10px;
+    align-items: center; justify-content: center;
+    flex-wrap: wrap;
+  }
+  .slider-group {
+    display: flex; flex-direction: column;
+    align-items: center; gap: 2px;
+  }
+  .slider-group label { font-size: 11px; color: #7a8a9a; }
+  .slider-group input[type="range"] {
+    width: 100px; accent-color: #5dfc5d;
+  }
+  .slider-val { font-size: 12px; color: #5dfc5d; font-weight: 600; }
+
+  /* ===== LLM 对话记录 ===== */
+  .llm-chat-box {
+    margin-top: 10px;
+    flex:1;
+    overflow-y: auto;
+    background: #0f1f2f;
+    border-radius: 6px;
+    padding: 8px;
+    font-size: 26px;
+    line-height: 1.5;
+  }
+  .llm-chat-box::-webkit-scrollbar { width: 4px; }
+  .llm-chat-box::-webkit-scrollbar-thumb { background: #3a5068; border-radius: 2px; }
+  .chat-msg { margin-bottom: 4px; }
+  .chat-msg.user { color: #7ab8ff; }
+  .chat-msg.bot { color: #5dfc5d; }
+
+  /* ===== 机械臂控制 ===== */
+  .arm-section { margin-bottom: 12px; }
+  .arm-section:last-child { margin-bottom: 0; }
+  .arm-section-title {
+    font-size: 12px; color: #7a8a9a; margin-bottom: 6px;
+    border-bottom: 1px solid #2a3a4a; padding-bottom: 4px;
+  }
+  .arm-service-btns {
+    display: flex; gap: 8px; flex-wrap: wrap;
+  }
+  .arm-svc-btn {
+    flex: 1; min-width: 70px; padding: 8px 6px;
+    border: 1px solid #3a5068; border-radius: 8px;
+    background: #223344; color: #e0e6ed;
+    font-size: 13px; font-weight: 600; cursor: pointer;
+    text-align: center; transition: all 0.2s;
+  }
+  .arm-svc-btn:hover { border-color: #7ab8ff; background: #2a4055; }
+  .arm-svc-btn.catch { border-color: #ff9f43; color: #ff9f43; }
+  .arm-svc-btn.catch:hover { background: #3a2a10; }
+  .arm-svc-btn.loosen { border-color: #54a0ff; color: #54a0ff; }
+  .arm-svc-btn.loosen:hover { background: #102a3a; }
+  .arm-svc-btn.home { border-color: #5dfc5d; color: #5dfc5d; }
+  .arm-svc-btn.home:hover { background: #1a3a1a; }
+
+  .arm-joint-row {
+    display: flex; align-items: center; gap: 8px;
+    margin-bottom: 4px;
+  }
+  .arm-joint-row label {
+    min-width: 28px; font-size: 12px; color: #7ab8ff; font-weight: 600;
+  }
+  .arm-joint-row input[type="range"] {
+    flex: 1; accent-color: #7ab8ff; height: 6px;
+  }
+  .arm-joint-row .joint-val {
+    min-width: 36px; text-align: right; font-size: 12px;
+    color: #5dfc5d; font-weight: 600;
+  }
+
+  .arm-xyz-row {
+    display: flex; gap: 6px; align-items: center; margin-bottom: 4px;
+  }
+  .arm-xyz-row label {
+    min-width: 16px; font-size: 13px; font-weight: 700;
+  }
+  .arm-xyz-row label.x-label { color: #ff6b6b; }
+  .arm-xyz-row label.y-label { color: #5dfc5d; }
+  .arm-xyz-row label.z-label { color: #54a0ff; }
+  .arm-xyz-input {
+    flex: 1; padding: 4px 8px; background: #0f1f2f; color: #e0e6ed;
+    border: 1px solid #3a5068; border-radius: 4px; font-size: 13px;
+    outline: none; width: 60px;
+  }
+  .arm-xyz-input:focus { border-color: #7ab8ff; }
+  .arm-xyz-unit { font-size: 11px; color: #7a8a9a; }
+
+  .arm-ik-btn {
+    padding: 6px 14px; border: 1px solid #7ab8ff; border-radius: 6px;
+    background: #1a3050; color: #7ab8ff; font-size: 12px;
+    font-weight: 600; cursor: pointer; transition: all 0.2s;
+  }
+  .arm-ik-btn:hover { background: #2a4060; }
+  .arm-fk-info {
+    margin-top: 6px; padding: 6px 10px; background: #0f1f2f;
+    border-radius: 4px; font-size: 12px; color: #7a8a9a;
+  }
+  .arm-fk-info span { color: #5dfc5d; font-weight: 600; }
+  .arm-status {
+    margin-top: 6px; font-size: 11px; color: #ff9f43;
+    min-height: 16px;
+  }
+</style>
+</head>
+<body>
+
+<!-- ===== 顶栏 ===== -->
+<div class="header">
+  <h1>🚗 地瓜小车控制面板</h1>
+  <span id="conn-status" class="conn-status fail">未连接</span>
+</div>
+
+<!-- ===== 主内容 ===== -->
+<div class="main">
+
+  <!-- 地图 -->
+  <div class="card card-map">
+    <div class="card-title">📍 地图与位姿</div>
+    <div class="card-body">
+      <canvas id="map-canvas"></canvas>
+      <div style="margin-top:6px; font-size:12px; color:#7a8a9a;">
+        位姿: <span id="robot-pose">x:0.00 y:0.00 θ:0.00°</span>
+      </div>
+      <div class="goal-info" id="goal-info">点击地图设定导航目标</div>
+    </div>
+  </div>
+
+  <!-- 摄像头 -->
+  <div class="card card-camera">
+    <div class="card-title">
+      <div class="card-title-row">
+        <span>📷 摄像头</span>
+        <div id="camera-toggle" class="toggle-switch" onclick="toggleCamera()"></div>
+      </div>
+    </div>
+    <div class="card-body">
+      <iframe id="camera-feed" src="" frameborder="0" scrolling="no" allowfullscreen style="display:none;"></iframe>
+      <div id="camera-off-hint" class="camera-off-hint" style="display:flex;">摄像头已关闭</div>
+    </div>
+  </div>
+
+  <!-- 传感器 -->
+  <div class="card card-sensor">
+    <div class="card-title">📊 传感器状态</div>
+    <div class="card-body">
+      <div class="sensors">
+        <div class="sensor-item voltage">
+          <div class="sensor-label">电池电压</div>
+          <div class="sensor-value" id="val-voltage">--</div>
+          <div class="sensor-label">V</div>
+        </div>
+        <div class="sensor-item temp">
+          <div class="sensor-label">温度</div>
+          <div class="sensor-value" id="val-temp">--</div>
+          <div class="sensor-label">℃</div>
+        </div>
+        <div class="sensor-item humidity">
+          <div class="sensor-label">湿度</div>
+          <div class="sensor-value" id="val-humidity">--</div>
+          <div class="sensor-label">%</div>
+        </div>
+        <div class="sensor-item speed">
+          <div class="sensor-label">线速度/角速度</div>
+          <div class="sensor-value" id="val-speed">--</div>
+          <div class="sensor-label">m/s | rad/s</div>
+        </div>
+      </div>
+
+      <!-- 方向盘控制 -->
+      <div class="dpad-container">
+        <div class="dpad-row">
+          <div class="dpad-placeholder"></div>
+          <button class="dpad-btn" id="btn-fwd">↑</button>
+          <div class="dpad-placeholder"></div>
+        </div>
+        <div class="dpad-row">
+          <button class="dpad-btn" id="btn-ccw">↺</button>
+          <button class="dpad-btn stop" id="btn-stop">停</button>
+          <button class="dpad-btn" id="btn-cw">↻</button>
+        </div>
+        <div class="dpad-row">
+          <div class="dpad-placeholder"></div>
+          <button class="dpad-btn" id="btn-back">↓</button>
+          <div class="dpad-placeholder"></div>
+        </div>
+      </div>
+
+      <!-- 速度滑块 -->
+      <div class="speed-slider-area">
+        <div class="slider-group">
+          <label>线速度</label>
+          <input type="range" id="linear-slider" min="0.05" max="0.35" step="0.05" value="0.2">
+          <span class="slider-val" id="linear-val">0.2</span>
+        </div>
+        <div class="slider-group">
+          <label>角速度</label>
+          <input type="range" id="angular-slider" min="0.2" max="1.5" step="0.1" value="0.8">
+          <span class="slider-val" id="angular-val">0.8</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 机械臂控制 -->
+  <div class="card card-arm">
+    <div class="card-title">🦾 机械臂控制</div>
+    <div class="card-body">
+
+      <!-- 服务按钮 -->
+      <div class="arm-section">
+        <div class="arm-section-title">夹爪与复位</div>
+        <div class="arm-service-btns">
+          <button class="arm-svc-btn catch" onclick="armCatch()">🤏 抓取</button>
+          <button class="arm-svc-btn loosen" onclick="armLoosen()">✋ 松开</button>
+          <button class="arm-svc-btn home" onclick="armHome()">🏠 复位</button>
+        </div>
+      </div>
+
+      <!-- 关节角度控制 -->
+      <div class="arm-section">
+        <div class="arm-section-title">关节角度 (0°~180°)</div>
+        <div class="arm-joint-row">
+          <label>J0</label>
+          <input type="range" id="arm-j0" min="0" max="180" step="1" value="90" oninput="onJointSlider()">
+          <span class="joint-val" id="arm-j0-val">90°</span>
+        </div>
+        <div class="arm-joint-row">
+          <label>J1</label>
+          <input type="range" id="arm-j1" min="0" max="180" step="1" value="90" oninput="onJointSlider()">
+          <span class="joint-val" id="arm-j1-val">90°</span>
+        </div>
+        <div class="arm-joint-row">
+          <label>J2</label>
+          <input type="range" id="arm-j2" min="0" max="180" step="1" value="90" oninput="onJointSlider()">
+          <span class="joint-val" id="arm-j2-val">90°</span>
+        </div>
+        <div class="arm-joint-row">
+          <label>J3</label>
+          <input type="range" id="arm-j3" min="0" max="180" step="1" value="90" oninput="onJointSlider()">
+          <span class="joint-val" id="arm-j3-val">90°</span>
+        </div>
+        <button class="arm-ik-btn" onclick="armSendJoints()" style="margin-top:6px;">发送关节角度</button>
+      </div>
+
+      <!-- 世界坐标系 (IK) -->
+      <div class="arm-section">
+        <div class="arm-section-title">世界坐标逆运动学 (mm)</div>
+        <div class="arm-xyz-row">
+          <label class="x-label">X</label>
+          <input class="arm-xyz-input" type="number" id="arm-ik-x" value="0" step="1">
+          <span class="arm-xyz-unit">mm</span>
+          <label class="y-label">Y</label>
+          <input class="arm-xyz-input" type="number" id="arm-ik-y" value="0" step="1">
+          <span class="arm-xyz-unit">mm</span>
+          <label class="z-label">Z</label>
+          <input class="arm-xyz-input" type="number" id="arm-ik-z" value="0" step="1">
+          <span class="arm-xyz-unit">mm</span>
+        </div>
+        <div style="display:flex;gap:8px;margin-top:6px;">
+          <button class="arm-ik-btn" onclick="armIKMove()">IK 求解并移动</button>
+          <button class="arm-ik-btn" onclick="armUpdateFK()" style="border-color:#5dfc5d;color:#5dfc5d;background:#1a301a;">更新FK坐标</button>
+        </div>
+      </div>
+
+      <!-- 当前末端坐标 (FK) -->
+      <div class="arm-fk-info">
+        末端坐标: X=<span id="arm-fk-x">0.0</span>
+        Y=<span id="arm-fk-y">0.0</span>
+        Z=<span id="arm-fk-z">0.0</span> mm
+      </div>
+      <div class="arm-status" id="arm-status"></div>
+
+    </div>
+  </div>
+
+  <!-- 语音控制 -->
+  <div class="card card-voice">
+    <div class="card-title">🎙️ 语音/文字指令</div>
+    <div class="card-body">
+      <div class="voice-panel">
+        <input id="voice-input" class="voice-input"
+               placeholder="输入指令，如：去厨房、往前走一米..."
+               onkeydown="if(event.key==='Enter')sendVoice()" />
+        <button class="btn btn-send" onclick="sendVoice()">发送</button>
+        <button id="mic-btn" class="btn btn-mic" onclick="toggleMic()">🎤</button>
+      </div>
+
+      <div class="quick-cmds">
+        <button class="cmd-btn" onclick="quickCmd('往前走一米')">前进1米</button>
+        <button class="cmd-btn" onclick="quickCmd('左转')">左转</button>
+        <button class="cmd-btn" onclick="quickCmd('右转')">右转</button>
+        <button class="cmd-btn" onclick="quickCmd('停车')">停车</button>
+        <button class="cmd-btn" onclick="quickCmd('去厨房')">去厨房</button>
+        <button class="cmd-btn" onclick="quickCmd('看我手势行动')">看我手势行动</button>
+        <button class="cmd-btn" onclick="quickCmd('跟着我走路')">跟着我走路</button>
+        <button class="cmd-btn" onclick="quickCmd('自主探索')">探索</button>
+        <button class="cmd-btn" onclick="quickCmd('你看到了什么')">看看</button>
+        <button class="cmd-btn" onclick="quickCmd('查电压')">查电压</button>
+        <button class="cmd-btn" onclick="quickCmd('别跟了')">停止任务</button>
+      </div>
+
+      <div class="llm-chat-box" id="llm-chat-box">
+        <div class="chat-msg bot">地瓜助手就绪，等待指令...</div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+// ==================== ROS 连接（带自动重连） ====================
+let reconnectTimer = null;
+
+function connectRos() {
+  const url = `ws://${window.location.hostname}:9090`;
+  console.log('Connecting to rosbridge:', url);
+
+  ros.connect(url);
+}
+
+const ros = new ROSLIB.Ros();
+
+ros.on('connection', () => {
+  clearTimeout(reconnectTimer);
+  document.getElementById('conn-status').textContent = '已连接';
+  document.getElementById('conn-status').className = 'conn-status ok';
+  console.log('Connected to rosbridge');
+});
+ros.on('error', (error) => {
+  document.getElementById('conn-status').textContent = '连接错误';
+  document.getElementById('conn-status').className = 'conn-status fail';
+  console.error('Rosbridge error:', error);
+});
+ros.on('close', () => {
+  document.getElementById('conn-status').textContent = '未连接';
+  document.getElementById('conn-status').className = 'conn-status fail';
+  console.log('Rosbridge closed, reconnecting in 2s...');
+  reconnectTimer = setTimeout(connectRos, 2000);
+});
+
+// 首次连接
+connectRos();
+
+// ==================== 速度参数 ====================
+let maxLinear = 0.2;
+let maxAngular = 0.8;
+
+// ==================== 话题订阅 ====================
+
+// 1. 机器人状态 (RobotStatus)
+const robotStateTopic = new ROSLIB.Topic({
+  ros, name: '/robot_state',
+  messageType: 'gm_car_interfaces/msg/RobotStatus'
+});
+robotStateTopic.subscribe((msg) => {
+  document.getElementById('val-voltage').textContent = msg.battery_voltage.toFixed(1);
+  document.getElementById('val-speed').textContent =
+    `${msg.linear_velocity.toFixed(2)} / ${msg.angular_velocity.toFixed(2)}`;
+});
+
+// 2. 温湿度 (Float32MultiArray)
+const tempHumTopic = new ROSLIB.Topic({
+  ros, name: '/sensor_temp_humidity',
+  messageType: 'std_msgs/msg/Float32MultiArray'
+});
+tempHumTopic.subscribe((msg) => {
+  if (msg.data.length >= 3) {
+    document.getElementById('val-temp').textContent = msg.data[1].toFixed(1);
+    document.getElementById('val-humidity').textContent = msg.data[2].toFixed(0);
+  }
+});
+
+// 3. 机器人位姿 (通过 /odom) — 带节流
+const odomTopic = new ROSLIB.Topic({
+  ros, name: '/odom',
+  messageType: 'nav_msgs/msg/Odometry'
+});
+
+let lastOdomTime = 0;
+const ODOM_THROTTLE_MS = 100;  // 100ms 节流
+let pendingOdom = null;
+
+odomTopic.subscribe((msg) => {
+  const x = msg.pose.pose.position.x;
+  const y = msg.pose.pose.position.y;
+  const q = msg.pose.pose.orientation;
+  const yaw = Math.atan2(2*(q.w*q.z + q.x*q.y), 1 - 2*(q.y*q.y + q.z*q.z));
+  document.getElementById('robot-pose').textContent =
+    `x:${x.toFixed(2)} y:${y.toFixed(2)} θ:${(yaw*180/Math.PI).toFixed(1)}°`;
+
+  pendingOdom = { x, y, yaw };
+  const now = performance.now();
+  if (now - lastOdomTime >= ODOM_THROTTLE_MS) {
+    drawRobotOnMap(x, y, yaw);
+    lastOdomTime = now;
+  }
+});
+
+// odom 渲染循环 — 保证 pending 数据不会丢失
+function odomRenderLoop() {
+  if (pendingOdom) {
+    const now = performance.now();
+    if (now - lastOdomTime >= ODOM_THROTTLE_MS) {
+      drawRobotOnMap(pendingOdom.x, pendingOdom.y, pendingOdom.yaw);
+      lastOdomTime = now;
+      pendingOdom = null;
+    }
+  }
+  requestAnimationFrame(odomRenderLoop);
+}
+requestAnimationFrame(odomRenderLoop);
+
+// 4. 地图 (OccupancyGrid) — 带缓存
+const mapTopic = new ROSLIB.Topic({
+  ros, name: '/map',
+  messageType: 'nav_msgs/msg/OccupancyGrid'
+});
+let mapData = null;
+let mapCacheCanvas = null;  // 离屏 canvas 缓存底图
+
+mapTopic.subscribe((msg) => {
+  mapData = msg;
+  drawMapToCache();
+  drawCachedMap();
+});
+
+// 5. LLM 回复 (订阅 llm_chat_node 发布的回复文本)
+const llmReplyTopic = new ROSLIB.Topic({
+  ros, name: '/llm_response',
+  messageType: 'std_msgs/msg/String'
+});
+llmReplyTopic.subscribe((msg) => {
+  if (msg.data) {
+    appendChatMsg('bot', msg.data);
+  }
+});
+
+// ==================== 地图绘制（缓存优化） ====================
+const mapCanvas = document.getElementById('map-canvas');
+const mapCtx = mapCanvas.getContext('2d');
+
+// 将底图绘制到离屏 canvas 并缓存
+function drawMapToCache() {
+  if (!mapData) return;
+  const { data, info } = mapData;
+  const width = info.width;
+  const height = info.height;
+
+  if (!mapCacheCanvas) {
+    mapCacheCanvas = document.createElement('canvas');
+  }
+  mapCacheCanvas.width = width;
+  mapCacheCanvas.height = height;
+  const ctx = mapCacheCanvas.getContext('2d');
+
+  const imgData = ctx.createImageData(width, height);
+  for (let i = 0; i < data.length; i++) {
+    const val = data[i];
+    const px = i * 4;
+    if (val === -1) {           // 未知: 深灰
+      imgData.data[px] = 50; imgData.data[px+1] = 50; imgData.data[px+2] = 50;
+    } else if (val === 0) {     // 空闲: 亮色
+      imgData.data[px] = 230; imgData.data[px+1] = 230; imgData.data[px+2] = 230;
+    } else {                    // 障碍: 黑色
+      imgData.data[px] = 20; imgData.data[px+1] = 20; imgData.data[px+2] = 20;
+    }
+    imgData.data[px+3] = 255;
+  }
+  ctx.putImageData(imgData, 0, 0);
+}
+
+// 从缓存绘制底图到主 canvas
+function drawCachedMap() {
+  if (!mapCacheCanvas || !mapData) return;
+  mapCanvas.width = mapCacheCanvas.width;
+  mapCanvas.height = mapCacheCanvas.height;
+  mapCtx.drawImage(mapCacheCanvas, 0, 0);
+}
+
+// 绘制机器人位置（使用缓存底图 + 机器人标记）
+function drawRobotOnMap(x, y, yaw) {
+  if (!mapData || !mapCacheCanvas) return;
+  drawCachedMap();  // 从缓存快速绘制底图
+
+  const info = mapData.info;
+  // 世界坐标 → 像素坐标
+  const px = Math.round((x - info.origin.position.x) / info.resolution);
+  const py = Math.round((y - info.origin.position.y) / info.resolution);
+
+  // 画机器人（红色三角形，指向朝向）
+  mapCtx.save();
+  mapCtx.translate(px, py);
+  mapCtx.rotate(yaw);
+  mapCtx.beginPath();
+  mapCtx.moveTo(8, 0);
+  mapCtx.lineTo(-5, -5);
+  mapCtx.lineTo(-5, 5);
+  mapCtx.closePath();
+  mapCtx.fillStyle = '#ff4444';
+  mapCtx.fill();
+  mapCtx.restore();
+}
+
+// ==================== 地图点击导航 ====================
+const goalPoseTopic = new ROSLIB.Topic({
+  ros, name: '/goal_pose',
+  messageType: 'geometry_msgs/msg/PoseStamped'
+});
+
+mapCanvas.addEventListener('click', (e) => {
+  if (!mapData) return;
+  const rect = mapCanvas.getBoundingClientRect();
+  const scaleX = mapCanvas.width / rect.width;
+  const scaleY = mapCanvas.height / rect.height;
+  const canvasX = (e.clientX - rect.left) * scaleX;
+  const canvasY = (e.clientY - rect.top) * scaleY;
+
+  const info = mapData.info;
+  const worldX = canvasX * info.resolution + info.origin.position.x;
+  const worldY = canvasY * info.resolution + info.origin.position.y;
+
+  const msg = new ROSLIB.Message({
+    header: { frame_id: 'map' },
+    pose: {
+      position: { x: worldX, y: worldY, z: 0 },
+      orientation: { x: 0, y: 0, z: 0, w: 1 }
+    }
+  });
+  goalPoseTopic.publish(msg);
+  document.getElementById('goal-info').textContent =
+    `导航目标: x:${worldX.toFixed(2)} y:${worldY.toFixed(2)}`;
+  appendChatMsg('bot', `导航目标已设定: (${worldX.toFixed(2)}, ${worldY.toFixed(2)})`);
+});
+
+// ==================== 摄像头 ====================
+const cameraFeed = document.getElementById('camera-feed');
+const cameraToggle = document.getElementById('camera-toggle');
+const cameraOffHint = document.getElementById('camera-off-hint');
+const CAMERA_PORT = 8888;
+let cameraOn = false;
+
+// 摄像头启停服务（后端控制 usb_cam_node 进程）
+const cameraService = new ROSLIB.Service({
+  ros, name: '/camera_enable',
+  serviceType: 'std_srvs/srv/SetBool'
+});
+
+function loadCameraStream() {
+  const url = `http://${window.location.hostname}:${CAMERA_PORT}/stream?topic=/camera/image_raw&type=mjpeg`;
+  console.log('Loading camera stream:', url);
+  cameraFeed.src = url;
+}
+
+function toggleCamera() {
+  const targetOn = !cameraOn;
+  // 先调用后端服务启停摄像头节点
+  const request = new ROSLIB.ServiceRequest({ data: targetOn });
+  cameraService.callService(request, (response) => {
+    console.log('camera_enable response:', response);
+    if (response.success) {
+      cameraOn = targetOn;
+      if (cameraOn) {
+        cameraToggle.classList.add('on');
+        cameraFeed.style.display = '';
+        cameraOffHint.style.display = 'none';
+        // 等节点启动后再加载流
+        setTimeout(loadCameraStream, 2000);
+      } else {
+        cameraToggle.classList.remove('on');
+        cameraFeed.src = '';
+        cameraFeed.style.display = 'none';
+        cameraOffHint.style.display = 'flex';
+      }
+    } else {
+      appendChatMsg('bot', '摄像头操作失败: ' + response.message);
+    }
+  }, (error) => {
+    console.error('camera_enable service error:', error);
+    appendChatMsg('bot', '摄像头服务调用失败，请检查连接');
+  });
+}
+
+// 点击摄像头区域手动重试（仅在开启状态下）
+cameraFeed.addEventListener('click', () => { if (cameraOn) loadCameraStream(); });
+cameraFeed.style.cursor = 'pointer';
+
+// ==================== 语音/文字指令 ====================
+const asrPub = new ROSLIB.Topic({
+  ros, name: '/asr_result',
+  messageType: 'std_msgs/msg/String'
+});
+
+function sendVoice() {
+  const input = document.getElementById('voice-input');
+  const text = input.value.trim();
+  if (!text) return;
+  const msg = new ROSLIB.Message({ data: text });
+  asrPub.publish(msg);
+  appendChatMsg('user', text);
+  input.value = '';
+}
+
+function quickCmd(text) {
+  const msg = new ROSLIB.Message({ data: text });
+  asrPub.publish(msg);
+  appendChatMsg('user', text);
+}
+
+// ==================== LLM 对话记录 ====================
+function appendChatMsg(role, text) {
+  const box = document.getElementById('llm-chat-box');
+  const div = document.createElement('div');
+  div.className = 'chat-msg ' + role;
+  div.textContent = (role === 'user' ? '👤 ' : '🤖 ') + text;
+  box.appendChild(div);
+  box.scrollTop = box.scrollHeight;
+}
+
+// ==================== 浏览器麦克风 ====================
+let isRecording = false;
+let recognition = null;
+
+function toggleMic() {
+  const btn = document.getElementById('mic-btn');
+  if (!isRecording) {
+    // 使用浏览器 Web Speech API
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      alert('浏览器不支持语音识别，请使用 Chrome');
+      return;
+    }
+    recognition = new SpeechRecognition();
+    recognition.lang = 'zh-CN';
+    recognition.continuous = false;
+    recognition.interimResults = false;
+    recognition.onresult = (event) => {
+      const text = event.results[0][0].transcript;
+      document.getElementById('voice-input').value = text;
+      sendVoice();
+    };
+    recognition.onend = () => {
+      isRecording = false;
+      btn.classList.remove('recording');
+      btn.textContent = '🎤';
+    };
+    recognition.start();
+    isRecording = true;
+    btn.classList.add('recording');
+    btn.textContent = '🔴';
+  } else {
+    recognition.stop();
+  }
+}
+
+// ==================== 速度控制 ====================
+const cmdVelTopic = new ROSLIB.Topic({
+  ros, name: '/cmd_vel',
+  messageType: 'geometry_msgs/msg/Twist'
+});
+
+function sendCmd(linear, angular) {
+  const msg = new ROSLIB.Message({
+    linear: { x: linear, y: 0, z: 0 },
+    angular: { x: 0, y: 0, z: angular }
+  });
+  cmdVelTopic.publish(msg);
+}
+
+// 方向盘按钮 — 长按持续发送
+let cmdInterval = null;
+
+function startCmd(linear, angular) {
+  stopCmd();
+  sendCmd(linear, angular);
+  cmdInterval = setInterval(() => sendCmd(linear, angular), 100);
+}
+
+function stopCmd() {
+  if (cmdInterval) { clearInterval(cmdInterval); cmdInterval = null; }
+  sendCmd(0, 0);
+}
+
+// 绑定方向盘按钮事件
+const dpadActions = {
+  'btn-fwd':  () => startCmd(maxLinear, 0),
+  'btn-back': () => startCmd(-maxLinear, 0),
+  'btn-ccw':  () => startCmd(0, maxAngular),
+  'btn-cw':   () => startCmd(0, -maxAngular),
+  'btn-stop': () => stopCmd(),
+};
+
+for (const [id, action] of Object.entries(dpadActions)) {
+  const btn = document.getElementById(id);
+  btn.addEventListener('mousedown', (e) => { e.preventDefault(); action(); });
+  btn.addEventListener('touchstart', (e) => { e.preventDefault(); action(); });
+}
+document.addEventListener('mouseup', stopCmd);
+document.addEventListener('touchend', stopCmd);
+
+// 速度滑块
+document.getElementById('linear-slider').addEventListener('input', (e) => {
+  maxLinear = parseFloat(e.target.value);
+  document.getElementById('linear-val').textContent = maxLinear.toFixed(1);
+});
+document.getElementById('angular-slider').addEventListener('input', (e) => {
+  maxAngular = parseFloat(e.target.value);
+  document.getElementById('angular-val').textContent = maxAngular.toFixed(1);
+});
+
+// ==================== 机械臂控制 ====================
+const ARM_L1 = 80.0;   // 底座高度 mm
+const ARM_L2 = 105.0;  // 大臂长度 mm
+const ARM_L3 = 150.0;  // 小臂长度 mm
+const ARM_HOME = [90, 90, 90, 90];
+const ARM_GRIPPER_CLOSE = 45;
+const ARM_GRIPPER_OPEN = 135;
+
+// 关节角度命令话题
+const armCmdTopic = new ROSLIB.Topic({
+  ros, name: '/arm_joint_commands',
+  messageType: 'std_msgs/msg/Float32MultiArray'
+});
+
+// 关节角度反馈话题
+const armAngleTopic = new ROSLIB.Topic({
+  ros, name: '/arm_joint_angles',
+  messageType: 'std_msgs/msg/Float32MultiArray'
+});
+armAngleTopic.subscribe((msg) => {
+  const data = msg.data;
+  // ESP32 micro-ROS 在 index 0 附加了时间戳，跳过
+  const angles = data.length > 4 ? data.slice(1) : data;
+  if (angles.length >= 4) {
+    updateArmSliders(angles[0], angles[1], angles[2], angles[3]);
+  }
+});
+
+// 机械臂服务
+const catchService = new ROSLIB.Service({
+  ros, name: '/catch_object',
+  serviceType: 'gm_4dof_interfaces/srv/Catch'
+});
+const loosenService = new ROSLIB.Service({
+  ros, name: '/loosen_object',
+  serviceType: 'gm_4dof_interfaces/srv/Loosen'
+});
+const homeService = new ROSLIB.Service({
+  ros, name: '/home_object',
+  serviceType: 'gm_4dof_interfaces/srv/Home'
+});
+
+function armSetStatus(text) {
+  document.getElementById('arm-status').textContent = text;
+}
+
+function updateArmSliders(j0, j1, j2, j3) {
+  // 只更新显示文本，不改变滑块位置
+  document.getElementById('arm-j0-val').textContent = Math.round(j0) + '°';
+  document.getElementById('arm-j1-val').textContent = Math.round(j1) + '°';
+  document.getElementById('arm-j2-val').textContent = Math.round(j2) + '°';
+  document.getElementById('arm-j3-val').textContent = Math.round(j3) + '°';
+  // 更新 FK 坐标显示
+  armUpdateFKWithAngles([j0, j1, j2, j3]);
+}
+
+function armUpdateFKWithAngles(angles) {
+  const xyz = armForwardKinematics(angles);
+  document.getElementById('arm-fk-x').textContent = xyz[0].toFixed(1);
+  document.getElementById('arm-fk-y').textContent = xyz[1].toFixed(1);
+  document.getElementById('arm-fk-z').textContent = xyz[2].toFixed(1);
+}
+
+function getArmSliders() {
+  return [
+    parseFloat(document.getElementById('arm-j0').value),
+    parseFloat(document.getElementById('arm-j1').value),
+    parseFloat(document.getElementById('arm-j2').value),
+    parseFloat(document.getElementById('arm-j3').value),
+  ];
+}
+
+function onJointSlider() {
+  const a = getArmSliders();
+  document.getElementById('arm-j0-val').textContent = Math.round(a[0]) + '°';
+  document.getElementById('arm-j1-val').textContent = Math.round(a[1]) + '°';
+  document.getElementById('arm-j2-val').textContent = Math.round(a[2]) + '°';
+  document.getElementById('arm-j3-val').textContent = Math.round(a[3]) + '°';
+  armUpdateFK();
+}
+
+function armSendJoints() {
+  const a = getArmSliders();
+  armCmdTopic.publish(new ROSLIB.Message({ data: a }));
+  armSetStatus('关节角度已发送: [' + a.map(v => v.toFixed(0)).join(', ') + ']');
+}
+
+// --- 正运动学 (Forward Kinematics) ---
+function armForwardKinematics(angles) {
+  const t0 = angles[0] * Math.PI / 180;
+  const t1 = angles[1] * Math.PI / 180;
+  const t2 = angles[2] * Math.PI / 180;
+  const q1 = Math.PI / 2 - t1;
+  const q2 = Math.PI / 2 - t2;
+  const r_plane = ARM_L2 * Math.sin(q1) + ARM_L3 * Math.sin(q1 + q2);
+  const z_plane = ARM_L2 * Math.cos(q1) + ARM_L3 * Math.cos(q1 + q2);
+  const base_rot = t0 - Math.PI / 2;
+  const x = r_plane * Math.cos(base_rot);
+  const y = r_plane * Math.sin(base_rot);
+  const z = z_plane + ARM_L1;
+  return [x, y, z];
+}
+
+function armUpdateFK() {
+  const a = getArmSliders();
+  const xyz = armForwardKinematics(a);  // ← 需要先获取 xyz
+  armUpdateFKWithAngles(a);
+  document.getElementById('arm-ik-x').value = Math.round(xyz[0]);
+  document.getElementById('arm-ik-y').value = Math.round(xyz[1]);
+  document.getElementById('arm-ik-z').value = Math.round(xyz[2]);
+}
+
+// --- 逆运动学 (Inverse Kinematics) ---
+function armInverseKinematics(x, y, z, currentBase) {
+  const r = Math.sqrt(x * x + y * y);
+  let theta0;
+  if (r < 1.0) {
+    if (currentBase !== null && currentBase !== undefined) {
+      theta0 = currentBase;
+    } else {
+      return null;
+    }
+  } else {
+    theta0 = Math.atan2(y, x) * 180 / Math.PI + 90.0;
+  }
+  const z_shoulder = z - ARM_L1;
+  const d_sq = r * r + z_shoulder * z_shoulder;
+  const d = Math.sqrt(d_sq);
+  if (d > ARM_L2 + ARM_L3 - 0.1 || d < Math.abs(ARM_L2 - ARM_L3) + 0.1) {
+    return null;
+  }
+  let cos_q2 = (d_sq - ARM_L2 * ARM_L2 - ARM_L3 * ARM_L3) / (2.0 * ARM_L2 * ARM_L3);
+  cos_q2 = Math.max(-1.0, Math.min(1.0, cos_q2));
+  const q2 = Math.acos(cos_q2);
+  const k1 = ARM_L2 + ARM_L3 * cos_q2;
+  const k2 = ARM_L3 * Math.sin(q2);
+  const q1 = Math.atan2(r, z_shoulder) - Math.atan2(k2, k1);
+  let theta1 = 90.0 - q1 * 180 / Math.PI;
+  let theta2 = 90.0 - q2 * 180 / Math.PI;
+  theta0 = Math.max(0, Math.min(180, theta0));
+  theta1 = Math.max(0, Math.min(180, theta1));
+  theta2 = Math.max(0, Math.min(180, theta2));
+  return [theta0, theta1, theta2];
+}
+
+function armIKMove() {
+  const x = parseFloat(document.getElementById('arm-ik-x').value) || 0;
+  const y = parseFloat(document.getElementById('arm-ik-y').value) || 0;
+  const z = parseFloat(document.getElementById('arm-ik-z').value) || 0;
+  const currentBase = parseFloat(document.getElementById('arm-j0').value);
+  const result = armInverseKinematics(x, y, z, currentBase);
+  if (result === null) {
+    armSetStatus('目标不可达: (' + x + ', ' + y + ', ' + z + ') mm');
+    return;
+  }
+  const gripper = parseFloat(document.getElementById('arm-j3').value);
+  const angles = [result[0], result[1], result[2], gripper];
+  updateArmSliders(result[0], result[1], result[2], gripper);
+  armCmdTopic.publish(new ROSLIB.Message({ data: angles }));
+  armSetStatus('IK移动: [' + angles.map(v => v.toFixed(1)).join(', ') + '] → (' + x + ', ' + y + ', ' + z + ')');
+}
+
+// --- 服务调用 ---
+function armCallService(svc, type, actionName, delay) {
+  const request = new ROSLIB.ServiceRequest({ delay_time: delay || 2 });
+  svc.callService(request, (response) => {
+    const status = response.result ? '成功' : '失败';
+    armSetStatus(actionName + ' ' + status);
+  }, (error) => {
+    armSetStatus(actionName + ' 服务调用失败');
+  });
+}
+
+function armCatch() {
+  armCallService(catchService, 'Catch', '抓取');
+  document.getElementById('arm-j3').value = ARM_GRIPPER_CLOSE;
+  document.getElementById('arm-j3-val').textContent = ARM_GRIPPER_CLOSE + '°';
+}
+
+function armLoosen() {
+  armCallService(loosenService, 'Loosen', '松开');
+  document.getElementById('arm-j3').value = ARM_GRIPPER_OPEN;
+  document.getElementById('arm-j3-val').textContent = ARM_GRIPPER_OPEN + '°';
+}
+
+function armHome() {
+  armCallService(homeService, 'Home', '复位');
+  // 直接设置滑块值 + 显示文本
+  document.getElementById('arm-j0').value = 90;
+  document.getElementById('arm-j1').value = 90;
+  document.getElementById('arm-j2').value = 90;
+  document.getElementById('arm-j3').value = 90;
+  document.getElementById('arm-j0-val').textContent = '90°';
+  document.getElementById('arm-j1-val').textContent = '90°';
+  document.getElementById('arm-j2-val').textContent = '90°';
+  document.getElementById('arm-j3-val').textContent = '90°';
+  armUpdateFK();
+}
+
+// 初始化FK坐标
+armUpdateFK();
+</script>
+</body>
+</html>
